@@ -1,0 +1,209 @@
+-- Extensión para UUID
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Tabla de usuarios (común para freelancers y clientes)
+CREATE TABLE users (
+    user_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    stellar_public_key VARCHAR(56) NOT NULL UNIQUE,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    profile_type VARCHAR(20) CHECK (profile_type IN ('freelancer', 'client', 'consulting_firm')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_verified BOOLEAN DEFAULT FALSE,
+    verification_token VARCHAR(255),
+    last_login TIMESTAMP WITH TIME ZONE
+);
+
+-- Tabla de perfiles de freelancers
+CREATE TABLE freelancer_profiles (
+    profile_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    headline VARCHAR(100),
+    description TEXT,
+    hourly_rate DECIMAL(10, 2),
+    available BOOLEAN DEFAULT TRUE,
+    location VARCHAR(100),
+    website_url VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tabla de perfiles de firmas de consultoría
+CREATE TABLE consulting_firm_profiles (
+    firm_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    firm_name VARCHAR(100) NOT NULL,
+    description TEXT,
+    location VARCHAR(100),
+    website_url VARCHAR(255),
+    founded_year INTEGER,
+    team_size INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tabla de habilidades
+CREATE TABLE skills (
+    skill_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(50) NOT NULL UNIQUE,
+    category VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tabla de relación freelancer-habilidades
+CREATE TABLE freelancer_skills (
+    freelancer_skill_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    profile_id UUID NOT NULL REFERENCES freelancer_profiles(profile_id) ON DELETE CASCADE,
+    skill_id UUID NOT NULL REFERENCES skills(skill_id) ON DELETE CASCADE,
+    proficiency_level INTEGER CHECK (proficiency_level BETWEEN 1 AND 5),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(profile_id, skill_id)
+);
+
+-- Tabla de relación firmas-habilidades
+CREATE TABLE firm_skills (
+    firm_skill_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    firm_id UUID NOT NULL REFERENCES consulting_firm_profiles(firm_id) ON DELETE CASCADE,
+    skill_id UUID NOT NULL REFERENCES skills(skill_id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(firm_id, skill_id)
+);
+
+-- Tabla de portafolios de freelancers
+CREATE TABLE freelancer_portfolios (
+    portfolio_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    profile_id UUID NOT NULL REFERENCES freelancer_profiles(profile_id) ON DELETE CASCADE,
+    title VARCHAR(100) NOT NULL,
+    description TEXT,
+    project_url VARCHAR(255),
+    image_url VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tabla de categorías de servicios
+CREATE TABLE service_categories (
+    category_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(50) NOT NULL UNIQUE,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tabla de servicios
+CREATE TABLE services (
+    service_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    provider_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    provider_type VARCHAR(20) CHECK (provider_type IN ('freelancer', 'consulting_firm')),
+    category_id UUID REFERENCES service_categories(category_id) ON DELETE SET NULL,
+    title VARCHAR(100) NOT NULL,
+    description TEXT NOT NULL,
+    price DECIMAL(10, 2) NOT NULL,
+    price_type VARCHAR(20) CHECK (price_type IN ('fixed', 'hourly')),
+    delivery_time INTEGER, -- in days
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tabla de contratos
+CREATE TABLE contracts (
+    contract_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    contract_address VARCHAR(255) NOT NULL UNIQUE, -- Dirección del contrato en Soroban
+    client_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    provider_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    service_id UUID NOT NULL REFERENCES services(service_id) ON DELETE CASCADE,
+    title VARCHAR(100) NOT NULL,
+    description TEXT,
+    total_amount DECIMAL(10, 2) NOT NULL,
+    currency VARCHAR(10) CHECK (currency IN ('XLM', 'USDC')) NOT NULL,
+    status VARCHAR(20) CHECK (status IN ('draft', 'pending', 'active', 'completed', 'cancelled', 'disputed')) DEFAULT 'draft',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    start_date TIMESTAMP WITH TIME ZONE,
+    end_date TIMESTAMP WITH TIME ZONE
+);
+
+-- Tabla de hitos (milestones)
+CREATE TABLE milestones (
+    milestone_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    contract_id UUID NOT NULL REFERENCES contracts(contract_id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    amount DECIMAL(10, 2) NOT NULL,
+    status VARCHAR(20) CHECK (status IN ('pending', 'approved', 'rejected', 'paid')) DEFAULT 'pending',
+    due_date TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    sequence_number INTEGER NOT NULL
+);
+
+-- Tabla de transacciones
+CREATE TABLE transactions (
+    transaction_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    contract_id UUID REFERENCES contracts(contract_id) ON DELETE SET NULL,
+    milestone_id UUID REFERENCES milestones(milestone_id) ON DELETE SET NULL,
+    transaction_hash VARCHAR(255) NOT NULL UNIQUE,
+    from_address VARCHAR(56) NOT NULL,
+    to_address VARCHAR(56) NOT NULL,
+    amount DECIMAL(10, 2) NOT NULL,
+    currency VARCHAR(10) CHECK (currency IN ('XLM', 'USDC')) NOT NULL,
+    status VARCHAR(20) CHECK (status IN ('pending', 'completed', 'failed')) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Tabla de reputación
+CREATE TABLE reputation_scores (
+    reputation_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    score DECIMAL(3, 2) NOT NULL DEFAULT 0.00 CHECK (score BETWEEN 0 AND 5),
+    total_reviews INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tabla de reseñas
+CREATE TABLE reviews (
+    review_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    contract_id UUID NOT NULL REFERENCES contracts(contract_id) ON DELETE CASCADE,
+    reviewer_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    reviewed_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tabla de mensajes
+CREATE TABLE messages (
+    message_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    sender_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    receiver_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    contract_id UUID REFERENCES contracts(contract_id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tabla de notificaciones
+CREATE TABLE notifications (
+    notification_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    type VARCHAR(50) NOT NULL,
+    message TEXT NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    reference_id VARCHAR(255), -- Puede ser contract_id, transaction_id, etc.
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Índices para mejorar el rendimiento
+CREATE INDEX idx_freelancer_skills_profile_id ON freelancer_skills(profile_id);
+CREATE INDEX idx_freelancer_skills_skill_id ON freelancer_skills(skill_id);
+CREATE INDEX idx_contracts_client_id ON contracts(client_id);
+CREATE INDEX idx_contracts_provider_id ON contracts(provider_id);
+CREATE INDEX idx_milestones_contract_id ON milestones(contract_id);
+CREATE INDEX idx_transactions_contract_id ON transactions(contract_id);
+CREATE INDEX idx_messages_contract_id ON messages(contract_id);
+CREATE INDEX idx_messages_sender_receiver ON messages(sender_id, receiver_id);
+CREATE INDEX idx_notifications_user_id ON notifications(user_id);
